@@ -6,6 +6,10 @@ import numpy as np
 import logging
 import os
 import traceback
+from functools import lru_cache
+import hashlib
+import json
+
 
 from opencensus.ext.azure.log_exporter import AzureLogHandler
 from app.models import CustomerFeatures, PredictionResponse, HealthResponse
@@ -65,7 +69,7 @@ async def load_model():
 def read_root():
     return {"message": "Bank Churn Prediction API"}
 
-    
+
 # -------------------------------------------------
 # Endpoints généraux
 # -------------------------------------------------
@@ -78,50 +82,49 @@ def health():
 # -------------------------------------------------
 # Prédiction
 # -------------------------------------------------
+def hash_features(features_dict: dict) -> str:
+    """Cree un hash unique pour les features"""
+    return hashlib.md5(
+        json.dumps(features_dict, sort_keys=True).encode()
+    ).hexdigest()
+
+# Cache pour les predictions (1000 dernieres)
+@lru_cache(maxsize=1000)
+def predict_cached(features_hash: str, features_json: str):
+    features_dict = json.loads(features_json)
+    input_data = np.array([[
+        features_dict["CreditScore"],
+        features_dict["Age"],
+        # ... autres features
+    ]])
+    
+    proba = model.predict_proba(input_data)[0, 1]
+    prediction = int(proba > 0.5)
+    
+    if proba < 0.3:
+        risk = "Low"
+    elif proba < 0.7:
+        risk = "Medium"
+    else:
+        risk = "High"
+    
+    return {
+        "churn_probability": round(float(proba), 4),
+        "prediction": prediction,
+        "risk_level": risk
+    }
+
 @app.post("/predict", response_model=PredictionResponse)
 def predict(features: CustomerFeatures):
-    if model is None:
-        raise HTTPException(status_code=503, detail="Modèle indisponible")
-
-    try:
-        X = np.array([[ 
-            features.CreditScore,
-            features.Age,
-            features.Tenure,
-            features.Balance,
-            features.NumOfProducts,
-            features.HasCrCard,
-            features.IsActiveMember,
-            features.EstimatedSalary,
-            features.Geography_Germany,
-            features.Geography_Spain
-        ]])
-
-        proba = model.predict_proba(X)[0][1]
-        prediction = int(proba > 0.5)
-
-        risk = "Low" if proba < 0.3 else "Medium" if proba < 0.7 else "High"
-
-        logger.info(
-            "prediction",
-            extra={
-                "custom_dimensions": {
-                    "event_type": "prediction",
-                    "probability": float(proba),
-                    "risk_level": risk
-                }
-            }
-        )
-
-        return {
-            "churn_probability": round(float(proba), 4),
-            "prediction": prediction,
-            "risk_level": risk
-        }
-
-    except Exception as e:
-        logger.error(f"Erreur prediction : {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    features_dict = features.dict()
+    features_hash = hash_features(features_dict)
+    features_json = json.dumps(features_dict)
+    
+    # Utilise le cache si disponible
+    result = predict_cached(features_hash, features_json)
+    
+    logger.info(f"Prediction - Hash: {features_hash[:8]}")
+    return result
 
 # -------------------------------------------------
 # Drift Detection (API)

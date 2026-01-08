@@ -59,6 +59,14 @@ async def load_model():
         model = None
 
 # -------------------------------------------------
+# Root endpoint
+# -------------------------------------------------
+@app.get("/")
+def read_root():
+    return {"message": "Bank Churn Prediction API"}
+
+    
+# -------------------------------------------------
 # Endpoints généraux
 # -------------------------------------------------
 @app.get("/health", response_model=HealthResponse)

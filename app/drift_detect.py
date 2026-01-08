@@ -12,6 +12,15 @@ import seaborn as sns
 
 def detect_drift(reference_file, production_file, threshold=0.05, output_dir="drift_reports"):
     os.makedirs(output_dir, exist_ok=True)
+    os.makedirs("data", exist_ok=True)
+
+    # ✅ AUTO-GENERATE DATA IF MISSING
+    if not os.path.exists(reference_file):
+        raise FileNotFoundError(f"{reference_file} not found")
+
+    if not os.path.exists(production_file):
+        from app.drift_data_gen import generate_drifted_data
+        generate_drifted_data(reference_file=reference_file, output_file=production_file)
 
     ref = pd.read_csv(reference_file)
     prod = pd.read_csv(production_file)
@@ -26,9 +35,5 @@ def detect_drift(reference_file, production_file, threshold=0.05, output_dir="dr
                 "statistic": float(stat),
                 "drift_detected": bool(p < threshold)
             }
-
-    report_path = f"{output_dir}/drift_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(report_path, "w") as f:
-        json.dump(results, f, indent=2)
 
     return results

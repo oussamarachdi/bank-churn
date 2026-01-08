@@ -57,6 +57,7 @@ async def load_model():
     global model
     try:
         model = joblib.load(MODEL_PATH)
+        predict_cached.cache_clear()
         logger.info(f"Modèle chargé depuis {MODEL_PATH}")
     except Exception as e:
         logger.error(f"Erreur chargement modèle : {e}")
@@ -88,41 +89,54 @@ def hash_features(features_dict: dict) -> str:
         json.dumps(features_dict, sort_keys=True).encode()
     ).hexdigest()
 
-# Cache pour les predictions (1000 dernieres)
 @lru_cache(maxsize=1000)
 def predict_cached(features_hash: str, features_json: str):
     features_dict = json.loads(features_json)
+
     input_data = np.array([[
         features_dict["CreditScore"],
         features_dict["Age"],
-        # ... autres features
+        features_dict["Tenure"],
+        features_dict["Balance"],
+        features_dict["NumOfProducts"],
+        features_dict["HasCrCard"],
+        features_dict["IsActiveMember"],
+        features_dict["EstimatedSalary"],
+        features_dict["Geography_Germany"],
+        features_dict["Geography_Spain"],
     ]])
-    
+
+    if model is None:
+        raise RuntimeError("Model not loaded")
+
     proba = model.predict_proba(input_data)[0, 1]
     prediction = int(proba > 0.5)
-    
+
     if proba < 0.3:
         risk = "Low"
     elif proba < 0.7:
         risk = "Medium"
     else:
         risk = "High"
-    
+
     return {
         "churn_probability": round(float(proba), 4),
         "prediction": prediction,
         "risk_level": risk
     }
 
+
 @app.post("/predict", response_model=PredictionResponse)
 def predict(features: CustomerFeatures):
-    features_dict = features.dict()
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+
+    features_dict = features.model_dump()
     features_hash = hash_features(features_dict)
     features_json = json.dumps(features_dict)
-    
-    # Utilise le cache si disponible
+
     result = predict_cached(features_hash, features_json)
-    
+
     logger.info(f"Prediction - Hash: {features_hash[:8]}")
     return result
 
